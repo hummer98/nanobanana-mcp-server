@@ -39,6 +39,7 @@ class ProImageService:
         system_instruction: str | None = None,
         input_images: list[tuple[str, str]] | None = None,
         use_storage: bool = True,
+        output_dir: str | None = None,
     ) -> tuple[list[MCPImage], list[dict[str, Any]]]:
         """
         Generate high-quality images using Gemini 3 Pro Image.
@@ -60,6 +61,7 @@ class ProImageService:
             system_instruction: Optional system-level guidance
             input_images: List of (base64, mime_type) tuples for conditioning
             use_storage: Store images and return resource links with thumbnails
+            output_dir: Optional custom output directory (uses default if None)
 
         Returns:
             Tuple of (image_blocks_or_resource_links, metadata_list)
@@ -71,6 +73,9 @@ class ProImageService:
             enable_grounding = self.config.enable_search_grounding
         if media_resolution is None:
             media_resolution = self.config.default_media_resolution
+
+        # Store output_dir for use in storage calls
+        self._current_output_dir = output_dir
 
         with ProgressContext(
             "pro_image_generation",
@@ -170,7 +175,8 @@ class ProImageService:
                             stored_info = self.storage_service.store_image(
                                 image_bytes,
                                 f"image/{self.config.default_image_format}",
-                                metadata
+                                metadata,
+                                output_dir=self._current_output_dir,
                             )
 
                             thumbnail_b64 = self.storage_service.get_thumbnail_base64(
@@ -235,6 +241,7 @@ class ProImageService:
         thinking_level: ThinkingLevel | None = None,
         media_resolution: MediaResolution | None = None,
         use_storage: bool = True,
+        output_dir: str | None = None,
     ) -> tuple[list[MCPImage], int]:
         """
         Edit images with Pro model's enhanced understanding.
@@ -251,6 +258,7 @@ class ProImageService:
             thinking_level: Reasoning depth
             media_resolution: Vision processing detail level
             use_storage: Store edited images and return resource links
+            output_dir: Custom output directory (uses default if None)
 
         Returns:
             Tuple of (edited_images_or_resource_links, count)
@@ -326,7 +334,8 @@ class ProImageService:
                         stored_info = self.storage_service.store_image(
                             image_bytes,
                             f"image/{self.config.default_image_format}",
-                            metadata
+                            metadata,
+                            output_dir=output_dir,
                         )
 
                         thumbnail_b64 = self.storage_service.get_thumbnail_base64(

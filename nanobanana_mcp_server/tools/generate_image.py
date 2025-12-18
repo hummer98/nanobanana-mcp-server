@@ -106,6 +106,14 @@ def register_generate_image_tool(server: FastMCP):
                 "See docs for supported values: 1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9."
             ),
         ] = None,
+        output_dir: Annotated[
+            str | None,
+            Field(
+                description="Custom output directory for generated images. "
+                "If not specified, uses the server's default IMAGE_OUTPUT_DIR. "
+                "The directory will be created if it doesn't exist."
+            ),
+        ] = None,
         _ctx: Context = None,
     ) -> ToolResult:
         """
@@ -136,8 +144,24 @@ def register_generate_image_tool(server: FastMCP):
 
             logger.info(
                 f"Generate image request: prompt='{prompt[:50]}...', n={n}, "
-                f"paths={input_image_paths}, model_tier={model_tier}, aspect_ratio={aspect_ratio}"
+                f"paths={input_image_paths}, model_tier={model_tier}, aspect_ratio={aspect_ratio}, "
+                f"output_dir={output_dir}"
             )
+
+            # Validate and prepare output directory
+            effective_output_dir = None
+            if output_dir:
+                # Expand user home directory and resolve path
+                expanded_path = os.path.expanduser(output_dir)
+                resolved_path = os.path.abspath(expanded_path)
+
+                # Create directory if it doesn't exist
+                try:
+                    os.makedirs(resolved_path, exist_ok=True)
+                    effective_output_dir = resolved_path
+                    logger.info(f"Using custom output directory: {effective_output_dir}")
+                except OSError as e:
+                    raise ValidationError(f"Failed to create output directory '{output_dir}': {e}") from e
 
             # Auto-detect mode based on inputs
             detected_mode = mode
@@ -267,6 +291,7 @@ def register_generate_image_tool(server: FastMCP):
                     system_instruction=system_instruction,
                     input_images=input_images,
                     aspect_ratio=aspect_ratio,
+                    output_dir=effective_output_dir,
                 )
 
             # Create response with file paths and thumbnails

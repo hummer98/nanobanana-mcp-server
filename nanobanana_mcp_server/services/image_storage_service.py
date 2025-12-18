@@ -167,6 +167,7 @@ class ImageStorageService:
         mime_type: str,
         metadata: Optional[Dict[str, Any]] = None,
         ttl_seconds: Optional[int] = None,
+        output_dir: Optional[str] = None,
     ) -> StoredImageInfo:
         """
         Store image and generate thumbnail.
@@ -176,6 +177,7 @@ class ImageStorageService:
             mime_type: MIME type (e.g., 'image/png')
             metadata: Additional metadata to store
             ttl_seconds: Time to live, defaults to 1 hour
+            output_dir: Custom output directory (uses base_dir if None)
 
         Returns:
             StoredImageInfo with paths and metadata
@@ -193,11 +195,23 @@ class ImageStorageService:
         }
         ext = ext_map.get(mime_type, ".png")
 
+        # Determine output directory
+        if output_dir:
+            effective_base_dir = Path(output_dir)
+            effective_thumbnails_dir = effective_base_dir / "thumbnails"
+            # Ensure directories exist
+            effective_base_dir.mkdir(parents=True, exist_ok=True)
+            effective_thumbnails_dir.mkdir(parents=True, exist_ok=True)
+            self.logger.info(f"Using custom output directory: {output_dir}")
+        else:
+            effective_base_dir = self.base_dir
+            effective_thumbnails_dir = self.thumbnails_dir
+
         # Create file paths
         filename = f"{image_id}{ext}"
-        full_path = str(self.base_dir / filename)
+        full_path = str(effective_base_dir / filename)
         thumbnail_filename = f"{image_id}_thumb.jpg"
-        thumbnail_path = str(self.thumbnails_dir / thumbnail_filename)
+        thumbnail_path = str(effective_thumbnails_dir / thumbnail_filename)
 
         try:
             # Get image dimensions

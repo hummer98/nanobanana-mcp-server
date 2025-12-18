@@ -71,6 +71,7 @@ class EnhancedImageService:
         system_instruction: Optional[str] = None,
         input_images: Optional[List[Tuple[str, str]]] = None,
         aspect_ratio: Optional[str] = None,
+        output_dir: Optional[str] = None,
     ) -> Tuple[List[MCPImage], List[Dict[str, Any]]]:
         """
         Generate images following the complete workflow from workflows.md.
@@ -92,11 +93,18 @@ class EnhancedImageService:
             system_instruction: Optional system instruction
             input_images: List of (base64, mime_type) tuples for input images
             aspect_ratio: Optional aspect ratio string (e.g., "16:9")
+            output_dir: Optional custom output directory (uses self.out_dir if None)
 
         Returns:
             Tuple of (thumbnail_images, metadata_list)
         """
         try:
+            # Determine effective output directory
+            effective_out_dir = output_dir if output_dir else self.out_dir
+            if output_dir:
+                self.logger.info(f"Using custom output directory: {output_dir}")
+                os.makedirs(output_dir, exist_ok=True)
+
             self.logger.info(f"Starting image generation: n={n}, prompt='{prompt[:50]}...'")
 
             # Step 1: Build content list for Gemini API
@@ -142,6 +150,7 @@ class EnhancedImageService:
                             negative_prompt,
                             system_instruction,
                             aspect_ratio,
+                            effective_out_dir,
                         )
 
                         all_thumbnail_images.append(thumbnail_image)
@@ -310,18 +319,25 @@ class EnhancedImageService:
         negative_prompt: Optional[str],
         system_instruction: Optional[str],
         aspect_ratio: Optional[str],
+        out_dir: Optional[str] = None,
     ) -> Tuple[MCPImage, Dict[str, Any]]:
         """
         Process a generated image through the complete workflow.
 
         Steps 3-8 from workflows.md generation sequence.
+
+        Args:
+            out_dir: Output directory (uses self.out_dir if None)
         """
+        # Use provided out_dir or fall back to instance default
+        effective_out_dir = out_dir if out_dir else self.out_dir
+
         # Step 3: M->>FS: save full-res image
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         image_hash = hashlib.md5(image_bytes).hexdigest()[:8]
         filename = f"gen_{timestamp}_{response_index}_{image_index}_{image_hash}"
 
-        full_path = os.path.join(self.out_dir, f"{filename}.{self.config.default_image_format}")
+        full_path = os.path.join(effective_out_dir, f"{filename}.{self.config.default_image_format}")
         
         # Ensure output directory exists
         os.makedirs(os.path.dirname(full_path), exist_ok=True)
@@ -348,7 +364,7 @@ class EnhancedImageService:
                 width, height = img.size
 
         # Step 4: M->>FS: create thumbnail (JPEG)
-        thumb_path = os.path.join(self.out_dir, f"{filename}_thumb.jpeg")
+        thumb_path = os.path.join(effective_out_dir, f"{filename}_thumb.jpeg")
         create_thumbnail(full_path, thumb_path, size=THUMBNAIL_SIZE)
 
         # Step 5-6: M->>F: files.upload -> F-->>M: { name:file_id, uri:file_uri }

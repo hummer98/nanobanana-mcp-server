@@ -186,13 +186,21 @@ class GeminiClient:
 
         # Pro-specific parameters
         if isinstance(self.gemini_config, ProImageConfig):
-            # Thinking level (Pro only)
+            # Note: gemini-3-pro-image-preview has thinking mode enabled by default
+            # and does NOT support thinking_level parameter (will error if passed)
+            # So we skip thinking_config entirely for this model
             if "thinking_level" in config:
-                filtered["thinking_level"] = config["thinking_level"]
+                self.logger.debug(
+                    f"Ignoring thinking_level={config['thinking_level']} - "
+                    "Pro image model has thinking enabled by default (not configurable)"
+                )
 
-            # Media resolution (Pro only)
+            # Note: media_resolution may not be supported by Pro image model
             if "media_resolution" in config:
-                filtered["media_resolution"] = config["media_resolution"]
+                self.logger.debug(
+                    f"Ignoring media_resolution={config['media_resolution']} - "
+                    "may not be supported by Pro image model"
+                )
 
             # Output resolution hints (may not be directly supported by API)
             if "output_resolution" in config:

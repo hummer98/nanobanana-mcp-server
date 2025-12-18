@@ -210,6 +210,9 @@ def register_generate_image_tool(server: FastMCP):
             # Get enhanced image service (would be injected in real implementation)
             enhanced_image_service = _get_enhanced_image_service()
 
+            # Initialize pro_generation_info for error tracking (used by Pro model)
+            pro_generation_info = None
+
             # Execute based on detected mode
             if detected_mode == "edit" and file_id:
                 # Edit by file_id following workflows.md sequence
@@ -258,16 +261,42 @@ def register_generate_image_tool(server: FastMCP):
 
                     logger.info(f"Loaded {len(input_images)} input images from file paths")
 
-                # Generate images following workflows.md pattern:
-                # M->G->FS->F->D (save full-res, create thumbnail, upload to Files API, track in DB)
-                thumbnail_images, metadata = enhanced_image_service.generate_images(
-                    prompt=prompt,
-                    n=n,
-                    negative_prompt=negative_prompt,
-                    system_instruction=system_instruction,
-                    input_images=input_images,
-                    aspect_ratio=aspect_ratio,
-                )
+                # Generate images using the selected model service
+                # Pro model: uses ProImageService with 4K, grounding, thinking level support
+                # Flash model: uses EnhancedImageService (legacy) for fast generation
+                if selected_tier == ModelTier.PRO:
+                    # Use ProImageService for Pro model with Pro-specific parameters
+                    from ..services import get_pro_image_service
+                    pro_service = get_pro_image_service()
+
+                    # Parse thinking level enum
+                    thinking_enum = ThinkingLevel(thinking_level) if thinking_level else ThinkingLevel.HIGH
+
+                    thumbnail_images, metadata, generation_info = pro_service.generate_images(
+                        prompt=prompt,
+                        n=n,
+                        resolution=resolution,
+                        thinking_level=thinking_enum,
+                        enable_grounding=enable_grounding,
+                        negative_prompt=negative_prompt,
+                        system_instruction=system_instruction,
+                        input_images=input_images,
+                        use_storage=True,
+                    )
+
+                    # Store generation_info for error reporting
+                    pro_generation_info = generation_info
+                else:
+                    # Use EnhancedImageService for Flash model (legacy workflow)
+                    # M->G->FS->F->D (save full-res, create thumbnail, upload to Files API, track in DB)
+                    thumbnail_images, metadata = enhanced_image_service.generate_images(
+                        prompt=prompt,
+                        n=n,
+                        negative_prompt=negative_prompt,
+                        system_instruction=system_instruction,
+                        input_images=input_images,
+                        aspect_ratio=aspect_ratio,
+                    )
 
             # Create response with file paths and thumbnails
             if metadata:
@@ -342,6 +371,15 @@ def register_generate_image_tool(server: FastMCP):
                         f"     📏 {width}x{height} • 💾 {size_mb}MB{extra_info}"
                     )
 
+                # Add error information if any errors occurred
+                if (detected_mode == "generate" and selected_tier == ModelTier.PRO
+                        and pro_generation_info and pro_generation_info.get("errors")):
+                    summary_lines.append("\n⚠️ **Errors encountered:**")
+                    for err in pro_generation_info["errors"]:
+                        summary_lines.append(
+                            f"  - Request {err['request_index']}: [{err['error_type']}] {err['error_message']}"
+                        )
+
                 summary_lines.append(
                     "\n🖼️ **Thumbnail previews shown below** (actual images saved to disk)"
                 )
@@ -349,9 +387,22 @@ def register_generate_image_tool(server: FastMCP):
 
                 content = [TextContent(type="text", text=full_summary), *thumbnail_images]
             else:
-                # Fallback if no images generated
-                summary = "❌ No images were generated. Please check the logs for details."
+                # Fallback if no images generated - include error details if available
+                error_details = ""
+                if (detected_mode == "generate" and selected_tier == ModelTier.PRO
+                        and pro_generation_info and pro_generation_info.get("errors")):
+                    error_details = "\n\n⚠️ **Errors:**\n"
+                    for err in pro_generation_info["errors"]:
+                        error_details += f"  - [{err['error_type']}] {err['error_message']}\n"
+
+                summary = f"❌ No images were generated.{error_details}"
                 content = [TextContent(type="text", text=summary)]
+
+            # Build errors list from pro_generation_info if available
+            generation_errors = None
+            if detected_mode == "generate" and selected_tier == ModelTier.PRO:
+                if pro_generation_info and pro_generation_info.get("errors"):
+                    generation_errors = pro_generation_info["errors"]
 
             structured_content = {
                 "mode": detected_mode,
@@ -403,6 +454,7 @@ def register_generate_image_tool(server: FastMCP):
                     / (1024 * 1024),
                     2,
                 ),
+                "errors": generation_errors,
             }
 
             action_verb = "edited" if detected_mode == "edit" else "generated"

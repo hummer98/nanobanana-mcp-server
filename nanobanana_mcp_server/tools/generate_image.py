@@ -214,16 +214,53 @@ def register_generate_image_tool(server: FastMCP):
             if detected_mode == "edit" and file_id:
                 # Edit by file_id following workflows.md sequence
                 logger.info(f"Edit mode: using file_id {file_id}")
+                # Note: file_id editing uses EnhancedImageService for proper Files API integration
+                # TODO: Add Pro model support for file_id editing
                 thumbnail_images, metadata = enhanced_image_service.edit_image_by_file_id(
                     file_id=file_id, edit_prompt=prompt
                 )
 
             elif detected_mode == "edit" and input_image_paths and len(input_image_paths) == 1:
-                # Edit by file path
+                # Edit by file path - use selected model
                 logger.info(f"Edit mode: using file path {input_image_paths[0]}")
-                thumbnail_images, metadata = enhanced_image_service.edit_image_by_path(
-                    instruction=prompt, file_path=input_image_paths[0]
-                )
+
+                if selected_tier == ModelTier.PRO:
+                    # Use ProImageService for Pro model editing
+                    from ..services import get_pro_image_service
+                    pro_service = get_pro_image_service()
+
+                    # Read image file and convert to base64
+                    with open(input_image_paths[0], "rb") as f:
+                        image_bytes = f.read()
+                    base_image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+                    # Detect MIME type
+                    edit_mime_type, _ = mimetypes.guess_type(input_image_paths[0])
+                    if not edit_mime_type or not edit_mime_type.startswith("image/"):
+                        edit_mime_type = "image/png"
+
+                    # Parse thinking level enum
+                    thinking_enum = ThinkingLevel(thinking_level) if thinking_level else ThinkingLevel.HIGH
+
+                    thumbnail_images, count = pro_service.edit_image(
+                        instruction=prompt,
+                        base_image_b64=base_image_b64,
+                        mime_type=edit_mime_type,
+                        thinking_level=thinking_enum,
+                        use_storage=True,
+                    )
+                    # Pro edit returns (images, count), need to build metadata
+                    metadata = [{
+                        "model": "Gemini 3 Pro Image",
+                        "model_tier": "pro",
+                        "instruction": prompt,
+                        "source_path": input_image_paths[0],
+                    }] * count
+                else:
+                    # Use EnhancedImageService for Flash model (legacy workflow)
+                    thumbnail_images, metadata = enhanced_image_service.edit_image_by_path(
+                        instruction=prompt, file_path=input_image_paths[0]
+                    )
 
             else:
                 # Generation mode (with optional input images for conditioning)
@@ -258,16 +295,39 @@ def register_generate_image_tool(server: FastMCP):
 
                     logger.info(f"Loaded {len(input_images)} input images from file paths")
 
-                # Generate images following workflows.md pattern:
-                # M->G->FS->F->D (save full-res, create thumbnail, upload to Files API, track in DB)
-                thumbnail_images, metadata = enhanced_image_service.generate_images(
-                    prompt=prompt,
-                    n=n,
-                    negative_prompt=negative_prompt,
-                    system_instruction=system_instruction,
-                    input_images=input_images,
-                    aspect_ratio=aspect_ratio,
-                )
+                # Generate images using the selected model service
+                # Pro model: uses ProImageService with 4K, grounding, thinking level support
+                # Flash model: uses EnhancedImageService (legacy) for fast generation
+                if selected_tier == ModelTier.PRO:
+                    # Use ProImageService for Pro model with Pro-specific parameters
+                    from ..services import get_pro_image_service
+                    pro_service = get_pro_image_service()
+
+                    # Parse thinking level enum
+                    thinking_enum = ThinkingLevel(thinking_level) if thinking_level else ThinkingLevel.HIGH
+
+                    thumbnail_images, metadata = pro_service.generate_images(
+                        prompt=prompt,
+                        n=n,
+                        resolution=resolution,
+                        thinking_level=thinking_enum,
+                        enable_grounding=enable_grounding,
+                        negative_prompt=negative_prompt,
+                        system_instruction=system_instruction,
+                        input_images=input_images,
+                        use_storage=True,
+                    )
+                else:
+                    # Use EnhancedImageService for Flash model (legacy workflow)
+                    # M->G->FS->F->D (save full-res, create thumbnail, upload to Files API, track in DB)
+                    thumbnail_images, metadata = enhanced_image_service.generate_images(
+                        prompt=prompt,
+                        n=n,
+                        negative_prompt=negative_prompt,
+                        system_instruction=system_instruction,
+                        input_images=input_images,
+                        aspect_ratio=aspect_ratio,
+                    )
 
             # Create response with file paths and thumbnails
             if metadata:
